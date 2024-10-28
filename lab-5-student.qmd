@@ -1,9 +1,21 @@
 ---
 title: "Lab 5: Murder in SQL City"
-author: "Your name here!"
-format: html
+author: "Alex Lung"
+date: "10/27/2024"
+format: 
+  html:  
+    embed-resources: true
+    code-tools: true
+    toc: true
+    number-sections: true
+    theme: cerulean
 editor: source
-embed-resources: true
+execute: 
+  echo: true
+  error: true
+  message: false
+  warning: false
+code-fold: true
 ---
 
 For this lab, you will be joining and filtering related datasets to solve a murder mystery!
@@ -18,16 +30,15 @@ The relational data you will be working with contains tables with different piec
 
 Solve the murder mystery, showing **all of your work in this document**. Your document and code must be well organized, easy to follow, and reproducible.
 
-+ Use headers and written descriptions to indicate what you are doing.
-+ Use `dplyr` verbs and `join` functions rather than just looking through the tables manually.
-+ Use good code formatting practices.
-+ Comment your code.
-+ Cite any external sources you use to solve the mystery.
+-   Use headers and written descriptions to indicate what you are doing.
+-   Use `dplyr` verbs and `join` functions rather than just looking through the tables manually.
+-   Use good code formatting practices.
+-   Comment your code.
+-   Cite any external sources you use to solve the mystery.
 
-### Tips 
+### Tips
 
 You may find the `pull()` function handy for displaying each clue as you go along.
-
 
 ## Access the Data
 
@@ -54,16 +65,167 @@ Detective Wickham reaches out to you...
 
 > A crime has taken place and I need your help! There was a murder in SQL City sometime on January 15, 2018. Could you retrieve the crime scene report from the police department’s database and follow the clues to find the person responsible for the murder?!
 
+#### Description of the Crime
+
 ```{r}
 #| label: inspecting-crime-scene-report
 
+crime_scene_report |>
+  filter(date == "20180115" & 
+           city == "SQL City" & 
+           type == "murder") |>
+  select(description)
+
+#Two witnesses from footage.
+#One lives at the last house on "Northwestern Dr".
+#The other, Annabel, lives somewhere on "Franklin Ave". 
+
 ```
 
+#### Witness Interviews
 
-**Follow the evidence to the person responsible for the murder, building a report as you go.**
-Hint: Make sure you check for interviews with any suspects!
+```{r}
+#| label: inspecting-witnesses
 
+suspects <- person |> 
+  filter(address_street_name == "Northwestern Dr") |>
+  arrange(desc(address_number)) |>
+  slice(1)
+
+
+#https://chatgpt.com/share/671c51b6-4170-8000-8487-5c4d9ce9f2ef
+#https://stackoverflow.com/questions/6286313/remove-an-entire-column-from-a-data-frame-in-r
+suspects <- person |>
+  mutate(First_name = str_split(name, " ", simplify = TRUE)[,1]) |>
+  filter(First_name == "Annabel"  & address_street_name == "Franklin Ave") |>
+  full_join(suspects) |>
+  subset(select =  -First_name)
+
+suspects
+
+interview |>
+  filter(person_id %in% suspects$id) 
+
+#Witnesses are Annabel Miller, ID: 16371 and Morty Schapiro, ID: 14887
+
+#Shapiro saw a man run out with a "Get Fit Now" gym bag, number started with "48Z".
+#These bags are only given to gold members and got in a car with a plate that included "H42W".
+
+#Miller saw the murder happen and recognized the killer, who worked out last week on January 9th. 
+```
+
+#### Suspect Determination
+
+```{r}
+#| label: suspect
+ 
+drivers_license |> 
+
+#Rename id in drivers id to prevent confusion.
+  rename(drivers_id = id) |>
+
+#Search for plates that have this pattern. 
+  filter(str_detect(plate_number, "H42W")) |>
+
+#Join data to consolidate information of suspect. 
+  inner_join(person,
+             by = join_by(
+               drivers_id == license_id
+             )) |>
+  inner_join(get_fit_now_member,
+             by = join_by(
+               id == person_id
+             )) |>
+  rename(gym_id = id.y) |>
+  inner_join(get_fit_now_check_in,
+             by = join_by(
+               gym_id == membership_id
+             )) |>
+  rename(person_name = name.x) |>
+  
+#Select columns of interest to verify suspect meets criteria given from witnesses. 
+  select(plate_number,
+         person_name,
+         id,
+         gym_id,
+         membership_status,
+         check_in_date)
+
+#Murderer is Jeremy Bowers as described by the witnesses
+```
+
+#### Suspect Confession
+
+```{r}
+#| label: suspect-interview
+
+interview |>
+  filter(person_id == "67318")
+
+#Suspect was hired by a women with a lot of money.
+#She is around 5'55" (65") or 5'7" (67"), red hair, drives a Tesla Model S.
+#She attended the SQL Symphony Concert 3 times in December 2017
+
+```
+
+#### Determine Associate
+
+```{r}
+#Determine if anyone fits the description given by Bowers
+
+#Starting with the facebook event dataset to find the id's of those that went 3 times to
+#the SQL Symphony Concert. 
+
+facebook_event_checkin |>
+  filter(event_name == "SQL Symphony Concert" &
+           str_starts(date, "201712")) |>
+  group_by(person_id) |>
+  summarise(num_of_visits = n()) |>
+  filter(num_of_visits == "3") 
+  
+#Use the id's that we got (24556 and 99716) to determine if they match Bowers 
+#given physical descriptions.
+
+drivers_license |>
+  
+  filter(hair_color == "red" & 
+           car_model == "Model S" & 
+           height >= "65" &
+           height <= "67"  
+           ) |>
+  rename(drivers_id = id) |>
+  
+  inner_join(person,
+             by = join_by(
+               drivers_id == license_id
+             )) |>
+  inner_join(income,
+             join_by(ssn)) |>
+  
+  filter(id == "99716" |
+           id == "24556") |>
+  
+#Select columns of interest to verify Bowers description of employer is correct.
+  select(name,
+         id,
+         height,
+         hair_color,
+         gender,
+         car_model,
+         annual_income)
+
+#Miranda Priestly matches the description and activity given by Bowers and has 
+#an income that would prove the purchase of a hitman possible. 
+
+
+```
+
+\`\`\`
+
+**Follow the evidence to the person responsible for the murder, building a report as you go.** Hint: Make sure you check for interviews with any suspects!
 
 ## And the final suspect is...
 
 *Put the name of the person responsible for the murder here:*
+
+**Murderer is Jeremy Bowers and his employer was Miranda Priestly**
