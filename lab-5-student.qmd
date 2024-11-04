@@ -71,40 +71,47 @@ Detective Wickham reaches out to you...
 #| label: inspecting-crime-scene-report
 
 crime_scene_report |>
-  filter(date == "20180115" & 
-           city == "SQL City" & 
+  
+  mutate(date = ymd(date)) |>
+  
+  filter(date == mdy("January 15, 2018"), 
+           city == "SQL City",
            type == "murder") |>
-  select(description)
-
-#Two witnesses from footage.
-#One lives at the last house on "Northwestern Dr".
-#The other, Annabel, lives somewhere on "Franklin Ave". 
+  
+  select(description) 
+ 
 
 ```
+*Reflection: When I initially looked at this problem, I took advantage of the fact that the date was a string and so I was able to work my way around using the lubridate functions. Really, I was depriving myself of the ability to apply the lubridate functions, preventing myself to learn. Luckily I was able to make the lubridate functions to work within my code and get the desired results that I wanted. I need to use this to show that I am capable of using new functions even if the datasets allow me to be comfortable and use functions I already use very often. This is followed by the alteration from using "&" to commas, which cleaned up the code even more. I just want this to teach me that there are cleaner alternative to cluttering the code up with more characters, when a "," will be more than enough to get the result I want.*
 
 #### Witness Interviews
 
 ```{r}
 #| label: inspecting-witnesses
 
-suspects <- person |> 
-  filter(address_street_name == "Northwestern Dr") |>
-  arrange(desc(address_number)) |>
-  slice(1)
 
+#Two witnesses from footage.
+#One lives at the last house on "Northwestern Dr".
+#The other, Annabel, lives somewhere on "Franklin Ave".
 
 #https://chatgpt.com/share/671c51b6-4170-8000-8487-5c4d9ce9f2ef
 #https://stackoverflow.com/questions/6286313/remove-an-entire-column-from-a-data-frame-in-r
-suspects <- person |>
-  mutate(First_name = str_split(name, " ", simplify = TRUE)[,1]) |>
-  filter(First_name == "Annabel"  & address_street_name == "Franklin Ave") |>
-  full_join(suspects) |>
-  subset(select =  -First_name)
 
-suspects
+person |> 
+  
+  right_join(interview,
+          by = join_by(
+            id == person_id)
+          ) |>
+  
+  filter(address_street_name == "Northwestern Dr" &
+           address_number == max(address_number) | 
+           (word(name) == "Annabel" &
+            address_street_name == "Franklin Ave")
+         ) |>
 
-interview |>
-  filter(person_id %in% suspects$id) 
+  
+  select(transcript)
 
 #Witnesses are Annabel Miller, ID: 16371 and Morty Schapiro, ID: 14887
 
@@ -113,46 +120,38 @@ interview |>
 
 #Miller saw the murder happen and recognized the killer, who worked out last week on January 9th. 
 ```
+*Reflection: I initially had this split up, which worked but did only provide more confusion regarding how the code worked, preventing it from being streamlined. I was able to connect the two functions into one pipeline, increasing processing speed. I altered the filter function to include both of the searches for the interviews, using the max() function for the address number. I also took the input in using the word() function as it led me to not requiring a split within the values of the name column and simplifying the code. My progression throughout this revision just encouraged me to keep looking for functions that complete multiple steps in one and keeping the code together when possible. Having code split with made the code more readable but, would also cause more outputs to be put out, causing the render document to be cluttered, with that solution being the use of an object, but this case did not require one.*
 
 #### Suspect Determination
 
 ```{r}
-#| label: suspect
+#| label: initial-suspect
  
-drivers_license |> 
+suspect <- drivers_license |> 
 
 #Rename id in drivers id to prevent confusion.
   rename(drivers_id = id) |>
 
-#Search for plates that have this pattern. 
-  filter(str_detect(plate_number, "H42W")) |>
-
-#Join data to consolidate information of suspect. 
-  inner_join(person,
+ #Join person's data to get name of people
+  full_join(person,
              by = join_by(
                drivers_id == license_id
-             )) |>
-  inner_join(get_fit_now_member,
-             by = join_by(
-               id == person_id
-             )) |>
-  rename(gym_id = id.y) |>
-  inner_join(get_fit_now_check_in,
-             by = join_by(
-               gym_id == membership_id
-             )) |>
-  rename(person_name = name.x) |>
+             )
+            ) |>
+    
+  #Search for plates that have this pattern
+  filter(str_detect(plate_number, "H42W")) |>
   
-#Select columns of interest to verify suspect meets criteria given from witnesses. 
-  select(plate_number,
-         person_name,
-         id,
-         gym_id,
-         membership_status,
-         check_in_date)
+  
+  filter(id %in% get_fit_now_member$person_id) 
+  
+suspect$name
+
+
 
 #Murderer is Jeremy Bowers as described by the witnesses
 ```
+*Reflection: For this aspect fo determining the suspect, I found it best that we have to include a variable to set our suspect in. We have been told to try our best to not create unnecessary object, but I just took it as not using them at all. In this case, the suspect variable would be ideal for later use so that hard-coding would not be needed. I like the idea of objects in that they can be used to split up the code, but I need to not make a habit of overflowing the environment with objects that are not useful in later aspects of the code.*
 
 #### Suspect Confession
 
@@ -160,7 +159,8 @@ drivers_license |>
 #| label: suspect-interview
 
 interview |>
-  filter(person_id == "67318")
+  filter(person_id == suspect$id) |>
+  select(transcript) 
 
 #Suspect was hired by a women with a lot of money.
 #She is around 5'55" (65") or 5'7" (67"), red hair, drives a Tesla Model S.
@@ -177,45 +177,52 @@ interview |>
 #the SQL Symphony Concert. 
 
 facebook_event_checkin |>
-  filter(event_name == "SQL Symphony Concert" &
-           str_starts(date, "201712")) |>
+  
+  #Change the date column to real "dates"
+  mutate(date = ymd(date)) |>
+  
+  filter(event_name == "SQL Symphony Concert",
+         month(date) == 12) |>
+  
   group_by(person_id) |>
-  summarise(num_of_visits = n()) |>
-  filter(num_of_visits == "3") 
   
-#Use the id's that we got (24556 and 99716) to determine if they match Bowers 
-#given physical descriptions.
-
-drivers_license |>
+  summarise(num_of_concert_visits = n()) |>
   
-  filter(hair_color == "red" & 
-           car_model == "Model S" & 
-           height >= "65" &
-           height <= "67"  
-           ) |>
-  rename(drivers_id = id) |>
+  filter(num_of_concert_visits == "3") |>
   
-  inner_join(person,
-             by = join_by(
-               drivers_id == license_id
-             )) |>
+  left_join(person,
+            by = join_by(
+              person_id == id)
+            ) |>
+  
+  right_join(drivers_license,
+         by = join_by(
+           license_id == id)
+         ) |>
+  
+  filter(hair_color == "red",
+         car_model == "Model S",
+         height >= "65" |
+           height <= "67"
+         ) |>
+  
   inner_join(income,
              join_by(ssn)) |>
   
-  filter(id == "99716" |
-           id == "24556") |>
-  
-#Select columns of interest to verify Bowers description of employer is correct.
-  select(name,
-         id,
-         height,
-         hair_color,
-         gender,
-         car_model,
-         annual_income)
+  left_join(interview,
+             join_by(person_id)) |>
 
-#Miranda Priestly matches the description and activity given by Bowers and has 
-#an income that would prove the purchase of a hitman possible. 
+  select(name,
+         annual_income,
+         transcript)
+
+
+
+#Miranda Priestly matches the description and activity given by Bowers 
+
+#She has an income that would prove the purchase of a hitman possible.
+
+#We found that she has not been interviewed and so she is the suspected employer of Priestly. 
 
 
 ```
@@ -228,4 +235,4 @@ drivers_license |>
 
 *Put the name of the person responsible for the murder here:*
 
-**Murderer is Jeremy Bowers and his employer was Miranda Priestly**
+**Murderer is Jeremy Bowers and his employer was possibly Miranda Priestly**
